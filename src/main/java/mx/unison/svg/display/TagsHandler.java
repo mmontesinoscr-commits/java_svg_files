@@ -43,7 +43,7 @@ public class TagsHandler  extends DefaultHandler {
 
     @Override
     public void startPrefixMapping(String prefix, String uri) throws SAXException {
-            super.startPrefixMapping(prefix, uri);
+        super.startPrefixMapping(prefix, uri);
     }
 
     @Override
@@ -79,6 +79,18 @@ public class TagsHandler  extends DefaultHandler {
             shapes.add(currentShape);
         }
 
+        if (tagName.equals("polyline") || tagName.equals("rect")
+                || tagName.equals("ellipse") || tagName.equals("text")) {
+            LOG.info("Starting element " + tagName);
+            currentShape = new Properties();
+            currentShape.put("type", tagName);
+            if (tagName.equals("text")) {
+                currentShape.put("content", "");   // se acumula en characters()
+            }
+
+            copyAttributes(atts, currentShape);
+            shapes.add(currentShape);
+        }
     }
 
     private void copyAttributes(Attributes atts, Properties myShape) {
@@ -93,12 +105,21 @@ public class TagsHandler  extends DefaultHandler {
 
     @Override
     public void endElement(String uri, String localName, String qName) throws SAXException {
+        if (currentShape != null && "text".equals(currentShape.getProperty("type"))) {
+            // Colapsa saltos de línea y espacios repetidos, como hace un navegador
+            String content = currentShape.getProperty("content", "");
+            currentShape.put("content", content.replaceAll("\\s+", " ").trim());
+        }
         currentShape = null;
     }
 
     @Override
     public void characters(char[] ch, int start, int length) throws SAXException {
-
+        // SAX puede entregar un mismo texto en varios fragmentos: se acumulan
+        if (currentShape != null && "text".equals(currentShape.getProperty("type"))) {
+            String previous = currentShape.getProperty("content", "");
+            currentShape.put("content", previous + new String(ch, start, length));
+        }
     }
 
     @Override

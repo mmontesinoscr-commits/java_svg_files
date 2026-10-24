@@ -5,6 +5,11 @@ import org.xml.sax.ContentHandler;
 import org.xml.sax.Locator;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
+import mx.unison.svg.util.PolyLine;
+import mx.unison.svg.util.elipse;
+import mx.unison.svg.util.svgText;
+import mx.unison.svg.util.svgRect;
+import java.awt.geom.Path2D;
 
 import javax.swing.*;
 import javax.xml.parsers.SAXParser;
@@ -98,6 +103,8 @@ public class SVGDiagram extends JComponent {
         super.paintComponent(g);
         LOG.info("Painting SVG Diagram");
         Graphics2D g2d = (Graphics2D) g;
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g2d.setColor(strokeColor);
 
         for (Properties shape : shapes) {
@@ -203,10 +210,128 @@ public class SVGDiagram extends JComponent {
                             radius * 2, radius * 2);
 
                 }
+            }   // <-- aquí termina el bloque de circle
+
+            if (type.equals("polyline")) {
+                PolyLine polyline = new PolyLine(shape.getProperty("points"));
+                if (!polyline.isValid()) {
+                    LOG.warning("Polyline ignorada: points inválido o con menos de 2 vértices");
+                    continue;
+                }
+                Path2D.Double path = polyline.toPath();
+
+                // En SVG, si fill no se indica, el relleno por defecto es negro
+                String fillAttr = shape.getProperty("fill");
+                Color fill = (fillAttr == null) ? Color.BLACK : safeColor(fillAttr);
+                if (fill != null) {                  // null = fill="none"
+                    g2d.setColor(fill);
+                    g2d.fill(path);
+                }
+
+                Color stroke = safeColor(shape.getProperty("stroke"));
+                if (stroke != null) {                // sin stroke no se dibuja contorno
+                    g2d.setColor(stroke);
+                    g2d.setStroke(new BasicStroke(parseStrokeWidth(shape.getProperty("stroke-width"))));
+                    g2d.draw(path);
+                }
+            }
+
+            if (type.equals("rect")) {
+                svgRect rect = new svgRect(shape.getProperty("x"), shape.getProperty("y"),
+                        shape.getProperty("width"), shape.getProperty("height"),
+                        shape.getProperty("rx"), shape.getProperty("ry"));
+                if (!rect.isValid()) {
+                    LOG.warning("Rect ignorado: width/height inválidos");
+                    continue;
+                }
+                Shape area = rect.toShape();
+
+                String fillAttr = shape.getProperty("fill");
+                Color fill = (fillAttr == null) ? Color.BLACK : safeColor(fillAttr);
+                if (fill != null) {
+                    g2d.setColor(fill);
+                    g2d.fill(area);
+                }
+
+                Color stroke = safeColor(shape.getProperty("stroke"));
+                if (stroke != null) {
+                    g2d.setColor(stroke);
+                    g2d.setStroke(new BasicStroke(parseStrokeWidth(shape.getProperty("stroke-width"))));
+                    g2d.draw(area);
+                }
+            }
+
+            if (type.equals("ellipse")) {
+                elipse ellipse = new elipse(shape.getProperty("cx"), shape.getProperty("cy"),
+                        shape.getProperty("rx"), shape.getProperty("ry"));
+                if (!ellipse.isValid()) {
+                    LOG.warning("Ellipse ignorada: radios inválidos");
+                    continue;
+                }
+                Shape area = ellipse.toShape();
+
+                String fillAttr = shape.getProperty("fill");
+                Color fill = (fillAttr == null) ? Color.BLACK : safeColor(fillAttr);
+                if (fill != null) {
+                    g2d.setColor(fill);
+                    g2d.fill(area);
+                }
+
+                Color stroke = safeColor(shape.getProperty("stroke"));
+                if (stroke != null) {
+                    g2d.setColor(stroke);
+                    g2d.setStroke(new BasicStroke(parseStrokeWidth(shape.getProperty("stroke-width"))));
+                    g2d.draw(area);
+                }
+            }
+
+            if (type.equals("text")) {
+                svgText text = new svgText(shape.getProperty("x"), shape.getProperty("y"),
+                        shape.getProperty("content"), shape.getProperty("font-family"),
+                        shape.getProperty("font-size"));
+                if (!text.isValid()) {
+                    continue;
+                }
+                String fillAttr = shape.getProperty("fill");
+                Color fill = (fillAttr == null) ? Color.BLACK : safeColor(fillAttr);
+                if (fill == null) {
+                    continue;               // fill="none": el texto es invisible
+                }
+                g2d.setColor(fill);
+                g2d.setFont(text.toFont());
+                // x, y es la línea base, igual que en SVG
+                g2d.drawString(text.getContent(), (float) text.getX(), (float) text.getY());
             }
 
         }
 
+    }
+
+    /** Devuelve el color, o null si es "none", nulo o no se puede interpretar. */
+    private Color safeColor(String value) {
+        if (value == null || value.equalsIgnoreCase("none")) return null;
+        try {
+            return Color.decode(value);                 // "#0000ff", "0xff0000"
+        } catch (NumberFormatException e) {
+            try {
+                return parseColor(value, 1.0f);         // "blue", "lightblue"...
+            } catch (RuntimeException ex) {             // nombre desconocido u otro error
+                LOG.warning("Unknown color: " + value);
+                return null;
+            }
+        }
+    }
+
+    /** Interpreta stroke-width; devuelve 1.0 si falta, es inválido o no es positivo. */
+    private float parseStrokeWidth(String value) {
+        if (value == null) return 1.0f;
+        try {
+            float w = Float.parseFloat(value.trim());
+            return w > 0 ? w : 1.0f;
+        } catch (NumberFormatException e) {
+            LOG.warning("Invalid stroke width: " + value);
+            return 1.0f;
+        }
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/named-color
@@ -258,13 +383,13 @@ public class SVGDiagram extends JComponent {
                 g = Integer.parseInt(colorCode.substring(2, 4), 16);
                 b = Integer.parseInt(colorCode.substring(4, 6), 16);
                 //System.out.println(r + "," + g + "," + b);
-              // newColor = new Color(r, g, b, opacity);
+                // newColor = new Color(r, g, b, opacity);
                 newColor = new Color(r, g, b);
             }
 
         } catch (NumberFormatException nfe) {
-           LOG.warning("Invalid color format: " + nfe.getMessage() );
-           newColor = Color.BLACK;
+            LOG.warning("Invalid color format: " + nfe.getMessage() );
+            newColor = Color.BLACK;
         }
         return newColor;
     }
